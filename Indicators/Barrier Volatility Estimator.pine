@@ -1,0 +1,60 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Marlborough76
+
+//@version=4
+study("Barrier Volatility Estimator", overlay=false, precision=4, max_bars_back=1500)
+
+// Barrier method for volatility estimation
+delta = input(0.02, minval=0.001, maxval = 0.999, step=0.001, title="Delta")
+n = input(14, minval=1, step=1, title="Number of observations (days)") * 24 * 60 / timeframe.multiplier
+
+get_barrier(n) =>
+    float volatility = na
+    float E = na
+    float barrier = na
+    int log_time = na
+    float exit_time = 0
+    float exit_happend = 0
+    
+    // zeroing first element
+    barrier := (na(barrier[1])) ? open : barrier[1]
+    log_time := (na(log_time[1])) ? time : log_time[1]
+    
+    float weight = 0
+    if ((high > barrier * (1 + delta) ) or ((low < barrier * (1 - delta))))
+        weight := high > barrier * (1 + delta) ? ((high - barrier) / barrier) / delta : ((barrier - low) / barrier) / delta
+        barrier := high > barrier * (1 + delta) ? high : low  //close
+        exit_time := (time / 1000 - log_time) / weight
+        log_time := time / 1000
+        exit_happend := 1
+    
+    float d = sum(exit_happend, n)
+    float exit_time_sum = sum(exit_time, n)
+    
+    E := d > 0 ? exit_time_sum / d : na
+    
+    if(timeframe.isintraday)
+        if(timeframe.isminutes)
+            E := E / (60 * timeframe.multiplier)
+            volatility := delta / sqrt(E) * sqrt(365 * 24 * 60 / timeframe.multiplier)
+    else
+        if (timeframe.isdaily)
+            E := E / (60 * 60 * 24)
+            volatility := delta / sqrt(E) * sqrt(365)
+        else
+            E := na
+            volatility := na
+    volatility
+
+a = get_barrier(n)
+b = sma(get_barrier(n),21)
+
+//relative_strength = a - b
+//rs = b + ema(relative_strength, 14)
+
+// c = get_barrier(1024)
+
+plot(a, color=#0088BB)
+plot(b, color=b / b[1] < 1 ? color.green : color.red)
+//col = rs / rs[1] < 1 ? color.green : color.red
+//plot(rs, color=col)

@@ -1,0 +1,155 @@
+//@version=3
+strategy("Marlborough Channel Strategy", overlay=true,
+     initial_capital=1000000, 
+     commission_type=strategy.commission.percent, 
+     commission_value=0.075,
+     currency = "USD",
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 100)
+source = close
+buy = false
+sell = false
+
+length_sma = input(110, minval=1)
+vlt_window = input(20, minval=1)
+ema_window = input(20, minval=1)
+vlt_length = input(120, minval=1)
+delta_up = highest(high, vlt_window) / close - 1
+delta_down = lowest(low, vlt_window) / close - 1
+ema = ema(source, ema_window)
+sma = sma(source, length_sma)
+
+vlt_up_prct = input(78, minval=1, maxval=100)
+vlt_down_prct = input(83, minval=1, maxval=100)
+vlt_range_up = percentile_nearest_rank(delta_up, vlt_length, vlt_up_prct)
+vlt_range_down = percentile_nearest_rank(delta_down, vlt_length, 100 - vlt_down_prct)
+trend_upper_channel = sma * (1 + vlt_range_up)
+trend_lower_channel = sma * (1 + vlt_range_down)
+
+close_upper_channel = highest(high, vlt_window)
+close_lower_channel = lowest(low, vlt_window)
+
+long_rsi_limit = input(50, minval=1)
+short_rsi_limit = input(50, minval=1)
+
+// === INPUT BACKTEST RANGE ===
+FromYear  = input(defval = 2018, title = "From Year", minval = 2009)
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+ToYear    = input(defval = 9999, title = "To Year", minval = 2017)
+ToMonth   = input(defval = 1, title = "To Month", minval = 1, maxval = 12)
+ToDay     = input(defval = 1, title = "To Day", minval = 1, maxval = 31)
+
+// === FUNCTION EXAMPLE ===
+start     = timestamp(FromYear, FromMonth, FromDay, 00, 00)  // backtest start window
+finish    = timestamp(ToYear, ToMonth, ToDay, 23, 59)        // backtest finish window
+window()  => time >= start and time <= finish ? true : false // create function "within window of time"
+
+long_stop_limit = na
+if not na(trend_upper_channel)
+    if strategy.position_size == 0
+        if close > trend_upper_channel
+            if close_lower_channel > trend_upper_channel
+                long_stop_limit := trend_upper_channel
+            else
+                long_stop_limit := close_lower_channel
+        else
+            long_stop_limit := na
+    else
+        if strategy.position_size > 0
+            if close_lower_channel > long_stop_limit[1]
+                if close_lower_channel > trend_upper_channel
+                    if trend_upper_channel > long_stop_limit[1]
+                        long_stop_limit := (trend_upper_channel < ema * ( 1 + delta_down) and close >= strategy.position_avg_price) ? ema * (1 + delta_down) : trend_upper_channel
+                    else
+                        long_stop_limit := (long_stop_limit[1] < ema * ( 1 + delta_down) and close >= strategy.position_avg_price) ? ema * (1 + delta_down) : long_stop_limit[1]
+                else
+                    if long_stop_limit[1] < close_lower_channel
+                        long_stop_limit := close_lower_channel
+                    else
+                        long_stop_limit := long_stop_limit[1]
+            else
+                long_stop_limit := long_stop_limit[1]
+
+short_stop_limit = na
+if not na(trend_lower_channel)
+    if strategy.position_size == 0
+        if close < trend_lower_channel
+            if close_upper_channel < trend_lower_channel
+                short_stop_limit := trend_lower_channel
+            else
+                short_stop_limit := close_upper_channel
+        else
+            short_stop_limit := na
+    else
+        if strategy.position_size < 0
+            if close_upper_channel < short_stop_limit[1]
+                if close_upper_channel < trend_lower_channel
+                    if trend_lower_channel < short_stop_limit[1]
+                        short_stop_limit := (trend_lower_channel > ema * ( 1 + delta_up) and close <= strategy.position_avg_price) ? ema * (1 + delta_up) : trend_lower_channel
+                    else
+                        short_stop_limit := (short_stop_limit[1] > ema * ( 1 + delta_up) and close <= strategy.position_avg_price) ? ema * (1 + delta_up) : short_stop_limit[1]
+                else
+                    if short_stop_limit[1] > close_upper_channel
+                        short_stop_limit := close_upper_channel
+                    else
+                        short_stop_limit := short_stop_limit[1]
+            else
+                short_stop_limit := short_stop_limit[1]
+
+rsi_val = na
+rsi_val := rsi(close, 14)
+
+// Exit
+colour = yellow
+if strategy.position_size > 0
+    strategy.exit(id="XL STP", stop=long_stop_limit)
+    colour := green
+
+if strategy.position_size < 0
+    strategy.exit(id="XS STP", stop=short_stop_limit)
+    colour := red
+
+if strategy.position_size == 0
+// Entry Long
+    if trend_upper_channel < close and rsi_val > long_rsi_limit
+        strategy.entry(id="EL-UC", long=true, when=window())
+        long_stop_limit := close_lower_channel  //FIX IT!!!
+        buy := true
+// Entry Short
+    if trend_lower_channel > close and rsi_val < short_rsi_limit
+        strategy.entry(id="ES-UC", long=false, when=window())
+        short_stop_limit := close_upper_channel  //FIX IT!!!
+        sell := true
+
+// Cleaning
+if strategy.position_size == 0 and buy == false 
+    long_stop_limit := na
+
+if strategy.position_size == 0 and sell == false
+    short_stop_limit := na
+
+
+plot(long_stop_limit, color=colour, style=cross, linewidth=2)
+plot(short_stop_limit, color=colour, style=cross, linewidth=2)
+
+plot(trend_upper_channel, color=#90EE90)
+plot(trend_lower_channel, color=#FFA07A)
+
+// // Volatility 
+// Length_short_term = input(10, minval=1)
+// Length_long_term = input(200, minval=1)
+// xATR_short_term = atr(Length_short_term)
+// xATR_long_term = atr(Length_long_term)
+// nRes_short_term = na
+// nRes_long_term = na
+// nRes_short_term := ((Length_short_term - 1) * nz(nRes_short_term[1], 0) + xATR_short_term) / Length_short_term
+// nRes_long_term := ((Length_long_term - 1) * nz(nRes_long_term[1], 0) + xATR_long_term) / Length_long_term
+
+// hv_color = nRes_short_term / nRes_long_term >= 1 ? green : red
+// plot(sma, color=hv_color, linewidth=2)
+//plot(ema_medium, color=orange)
+//plot(squeeze, color=red)
+plot(close_upper_channel, color=gray)
+plot(close_lower_channel, color=gray)
+//plot(strategy.equity, title="equity", color=red, linewidth=2, style=areabr)

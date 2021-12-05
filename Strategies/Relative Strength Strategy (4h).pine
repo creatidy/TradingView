@@ -1,0 +1,53 @@
+//@version=4
+strategy("Relative Strength Strategy (4h)", overlay=true,
+     initial_capital=1000000, 
+     commission_type=strategy.commission.percent, 
+     commission_value=0.075,
+     currency = "USD",
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 100)
+
+// Variables
+color col = na
+
+sma_mid_term_length = input(36, minval=1, title="Mid-term SMA (periods)")
+stop_limit = 1 - input(6, minval=1, title="Stop limit [%]") * 0.01
+FromYear  = input(defval = 2020, title = "From Year", minval = 2000)
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+ToYear    = input(defval = 9999, title = "To Year", minval = 2017)
+ToMonth   = input(defval = 1, title = "To Month", minval = 1, maxval = 12)
+ToDay     = input(defval = 1, title = "To Day", minval = 1, maxval = 31)
+start     = timestamp(FromYear, FromMonth, FromDay, 00, 00)  // backtest start window
+finish    = timestamp(ToYear, ToMonth, ToDay, 23, 59)        // backtest finish window
+yesterday = timenow - 16 * 60 * 60 * 1000
+window() => 
+    time >= start and time <= finish ? true : false // create function "within window of time"
+
+avg_price = (low + high + open + close) / 4
+sma_mid_term = sma(avg_price, sma_mid_term_length)
+
+relative_strength = (avg_price - sma_mid_term) / sma_mid_term
+rs = sma_mid_term + sma_mid_term * ema(relative_strength, sma_mid_term_length)
+rs_delta = (rs / rs[1] - 1)
+
+if not na(rs)
+    if strategy.position_size == 0
+        if window()
+            strategy.cancel_all()
+            if rs_delta > 0
+                strategy.order(id="L", long=true)
+
+    if strategy.position_size > 0
+        if rs_delta < 0
+            strategy.close(id='L')
+        else
+            strategy.exit(id='S', from_entry='L', stop=strategy.position_avg_price * stop_limit)
+        if time > yesterday and false
+            strategy.close_all()
+        
+col := color.gray
+col := rs_delta > 0 ? color.green : col
+col := rs_delta < 0 ? color.red : col
+plot(rs, color=col)
+plot(avg_price)
