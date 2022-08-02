@@ -62,51 +62,6 @@ close_volatility := close_volatility + get_barrier(observations, 1.4 * delta)
 close_volatility := close_volatility + get_barrier(observations+1, 1.5 * delta)
 close_volatility := close_volatility / 11
 
-int lastX = na
-float lastHY = na
-float lastLY = na
-lastX := lastX[1]
-lastHY := lastHY[1]
-lastLY := lastLY[1]
-consolidation_length = observations * 2 //timeframe.isminutes ? observations * 24 * 60 / timeframe.multiplier : observations
-candle_highest = ta.highest(close_volatility, consolidation_length)
-candle_lowest = ta.lowest(close_volatility, consolidation_length)
-consolidation_size = candle_highest - candle_lowest
-if  (candle_highest - candle_lowest > ta.highest(consolidation_size, consolidation_length) 
-     or (close_volatility > (candle_highest + candle_lowest) / 2 and close_volatility[consolidation_length] < (candle_highest + candle_lowest) / 2)
-     or (close_volatility < (candle_highest + candle_lowest) / 2 and close_volatility[consolidation_length] > (candle_highest + candle_lowest) / 2)
-     or consolidation_size > 3 * ta.stdev(close_volatility, consolidation_length))
-    candle_highest := na
-    candle_lowest := na
-if not na(candle_highest[1]) and not na(candle_highest)
-    candle_highest := candle_highest[1]
-    candle_lowest := candle_lowest[1]
-if (close_volatility + close_volatility[1]) / 2 > candle_highest or (close_volatility + close_volatility[1]) / 2 < candle_lowest
-    candle_highest := na
-    candle_lowest := na
-line line1 = na
-line line2 = na
-line line3 = na
-line line4 = na
-line line5 = na
-if not na(candle_highest[1]) and na(candle_highest)
-    if lastX < bar_index[consolidation_length]
-        line1 := line.new(bar_index[consolidation_length], candle_highest[1], bar_index, candle_highest[1], color=color.new(color.blue,60))
-        line3 := line.new(bar_index[consolidation_length], candle_lowest[1], bar_index, candle_lowest[1], color=color.new(color.blue,60))
-        line5 := line.new(bar_index[consolidation_length], (candle_highest[1] + candle_lowest[1]) / 2, bar_index, (candle_highest[1] + candle_lowest[1]) / 2, color=color.new(color.blue,60))
-    else
-        line1 := line.new(lastX, candle_highest[1], bar_index, candle_highest[1], color=color.new(color.blue,60))
-        line2 := line.new(lastX, candle_lowest[1], bar_index, candle_lowest[1], color=color.new(color.blue,60))
-        line3 := line.new(lastX, lastHY, lastX, candle_highest[1], style=line.style_dotted, color=color.new(color.blue,60))
-        line4 := line.new(lastX, lastLY, lastX, candle_lowest[1], style=line.style_dotted, color=color.new(color.blue,60))
-        line5 := line.new(lastX, (candle_highest[1] + candle_lowest[1]) / 2, bar_index, (candle_highest[1] + candle_lowest[1]) / 2, color=color.new(color.blue,60))
-    lastX := bar_index[1]
-    lastHY := candle_highest[1]
-    lastLY := candle_lowest[1]
-plot(candle_highest, color=color.blue, style=plot.style_linebr, linewidth=2)
-plot((candle_highest + candle_lowest) / 2, color=color.new(color.blue,60), style=plot.style_linebr, linewidth=1)
-plot(candle_lowest, color=color.blue, style=plot.style_linebr, linewidth=2)
-
 color_blank = color.new(color.white, 100)
 
 ema_5 = ta.ema(close_volatility, 5)
