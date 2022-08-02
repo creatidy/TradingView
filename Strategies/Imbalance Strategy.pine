@@ -9,11 +9,11 @@ strategy("Imbalace Strategy", overlay=true,
      commission_type=strategy.commission.cash_per_contract,
      commission_value=0.01,
      default_qty_type = strategy.percent_of_equity,
-     default_qty_value = 0)
+     default_qty_value = 100)
 
-FromYear  = input.int(defval = 2020, title = "From Year", minval = 2000)
+FromYear  = input.int(defval = 2019, title = "From Year", minval = 2000)
 FromMonth = input.int(defval = 1, title = "From Month", minval = 1, maxval = 12)
-Months    = input.int(defval = 36, title = "Months Ahead", minval = 1)
+Months    = input.int(defval = 120, title = "Months Ahead", minval = 1)
 ToYear    = FromYear + int(Months / 12)              // input.int(defval = 9999, title = "To Year", minval = 2017)
 ToMonth   = (Months + FromMonth) % 12                // input.int(defval = 1, title = "To Month", minval = 1, maxval = 12)
 start     = timestamp(FromYear, FromMonth, 1, 0, 0)  // backtest start window
@@ -23,92 +23,86 @@ window() =>
 
 /////////////////////////////////////
 // Common code
-sma_length=input.int(30, title="SMA Length")
-percentile = input.int(defval = 97, title="Impulse Percentile", minval=0, maxval=99)
-int score = input.int(4, title="Threshold", minval=1)
+percentile = input.int(defval = 95, title="Impulse Percentile", minval=0, maxval=99)
+max_channel_size = input.int(defval = 8, title="Max Channel Size [%]", minval=0, maxval=99) * 0.01
 
 green50 = color.new(#44FF24, 60)
 red50 = color.new(#FF4424, 50)
 
-/////////////////////////////////////
-// Volatility
-
-get_barrier(observations, delta) =>
-    n = timeframe.isminutes ? observations * 24 * 60 / timeframe.multiplier : 14
-    float close_volatility = na
-    float E = na
-    float barrier = na
-    int log_time = na
-    float exit_time = 0
-    float exit_happend = 0
-    float _delta = delta //na(close_volatility[1]) or close_volatility[1] * 0.02 < delta ? delta : close_volatility[1] * 0.02
-    
-    // zeroing first element
-    barrier := (na(barrier[1])) ? open : barrier[1]
-    log_time := (na(log_time[1])) ? time : log_time[1]
-    
-    float weight = 0
-    if ((high > barrier * (1 + _delta) ) or ((low < barrier * (1 - _delta))))
-        weight := high > barrier * (1 + _delta) ? ((high - barrier) / barrier) / _delta : ((barrier - low) / barrier) / _delta
-        barrier := high > barrier * (1 + _delta) ? high : low  //close
-        exit_time := (time / 1000 - log_time) / weight
-        log_time := time / 1000
-        exit_happend := 1
-    
-    float d = math.sum(exit_happend, n)
-    float exit_time_sum = math.sum(exit_time, n)
-    
-    E := d > 0 ? exit_time_sum / d : na
-    
-    if(timeframe.isintraday)
-        if(timeframe.isminutes)
-            E := E / (60 * timeframe.multiplier)
-            close_volatility := _delta / math.sqrt(E) * math.sqrt(365 * 24 * 60 / timeframe.multiplier)
-    else
-        if (timeframe.isdaily)
-            E := E / (60 * 60 * 24)
-            close_volatility := _delta / math.sqrt(E) * math.sqrt(365)
-        else
-            E := na
-            close_volatility := na
-
-
-// Barrier method for volatility estimation
-delta = input.float(0.02, minval=0.001, maxval = 0.999, step=0.001, title="_delta")
-observations = input.int(14, minval=1, step=1, title="Number of observations (days)")
-
-float close_volatility = 0
-close_volatility := close_volatility + get_barrier(observations-1, 0.5 * delta)
-close_volatility := close_volatility + get_barrier(observations, 0.6 * delta)
-close_volatility := close_volatility + get_barrier(observations+1, 0.7 * delta)
-close_volatility := close_volatility + get_barrier(observations, 0.8 * delta)
-close_volatility := close_volatility + get_barrier(observations-1, 0.9 * delta)
-close_volatility := close_volatility + get_barrier(observations, 1.0 * delta)
-close_volatility := close_volatility + get_barrier(observations+1, 1.1 * delta)
-close_volatility := close_volatility + get_barrier(observations, 1.2 * delta)
-close_volatility := close_volatility + get_barrier(observations-1, 1.3 * delta)
-close_volatility := close_volatility + get_barrier(observations, 1.4 * delta)
-close_volatility := close_volatility + get_barrier(observations+1, 1.5 * delta)
-close_volatility := close_volatility / 11
-
-color_blank = color.new(color.white, 100)
-
-ema_5 = ta.ema(close_volatility, 5)
-ema_5_highest = ta.lowest(ema_5, 200)
-ema_5_lowest =  ta.highest(ema_5, 200)
-
 /////////////////////////////////
-// Current trend colors
+// Averages
+///////////////////////////////////////
 
-sma_close = ta.sma(close, sma_length)
+smma(src, length) =>
+	smma =  0.0
+	smma := na(smma[1]) ? ta.sma(src, length) : (smma[1] * (length - 1) + src) / length
+	smma
+
+weekly = timeframe.isweekly ? 1 : 5
+smma_week = smma(close, 4 * weekly)
+smma_short = smma(close, 10 * weekly)
+smma_mid = smma(close, 30 * weekly)
+smma_long = smma(close, 40 * weekly)
+lowest = ta.lowest(low, 52 * weekly)
+highest = ta.lowest(high, 52 * weekly)
+
+
+/////////////////////////////////////
+// 
+
+ref_input = input("GPW:WIG", title="Reference")
+up_color = input(color.green, title="Strength Color")
+down_color = input(color.red, title="Weakness Color")
+oneYear = 52*weekly
+
+stock = request.security(syminfo.tickerid, timeframe.period, close)
+ref = array.pop(str.split(syminfo.tickerid,":")) != ref_input ? request.security(ref_input, timeframe.period, close) : stock
+
+// use more recent quarters if data for full year is not available
+quarter_perf(data, n) =>
+    i = n
+    refCandle = i*oneYear/4
+    baseCandle = (i-1)*oneYear/4
+    while (not data[refCandle] and i > 1) 
+        i := i - 1
+        refCandle := i*oneYear/4
+        baseCandle := (i-1)*oneYear/4
+    
+    ta.roc(data[baseCandle], refCandle)
+
+// first quarter is weighted more
+stock_performance = 0.4*quarter_perf(stock,1) + 0.2*quarter_perf(stock,2) + 0.2*quarter_perf(stock,3) + 0.2*quarter_perf(stock,4)
+ref_performance = 0.4*quarter_perf(ref,1) + 0.2*quarter_perf(ref,2) + 0.2*quarter_perf(ref,3) + 0.2*quarter_perf(ref,4)
+zero_line = 0
+rs = stock_performance - ref_performance
+
+up_trend = true
+// Stock price is above MA 150 and 200
+// MA 150 is above MA 200
+up_trend := smma_mid > smma_long ? up_trend : false
+// MA 200 is trending at least 1 month(22 days)
+up_trend := ta.lowest(smma_long, 4*weekly+1) == smma_long[4*weekly] ? up_trend : false
+// MA 50 is above both MA 150 and MA 200
+up_trend := smma_short > smma_mid ? up_trend : false
+// The current stock price is trading  above MA 50
+up_trend := close > smma_short ? up_trend : false
+// Current stock price is 30% above 52 weeks low
+up_trend := close > lowest * 1.30 ? up_trend : false
+// Current Price is within 25% of 52 week high
+up_trend := close > highest * 0.75 ? up_trend : false
+// RS Ratings more than 70
+// TODO
+up_trend := rs > 0 ? up_trend : false
+
+down_trend = smma_short < smma_mid and smma_mid < smma_long
 
 /////////////////////////
 // Volume
 	
-bar_size = math.abs(open - close)
+bar_size = math.abs(close[1] - close)
 bar_size_volume = bar_size * nz(volume, 1)
-percentile_close = ta.percentile_nearest_rank(bar_size_volume, 200, percentile)
-sma_volume = ta.sma(volume, sma_length)
+percentile_close = ta.percentile_nearest_rank(bar_size_volume, 40*weekly, percentile)
+sma_volume = ta.sma(volume, 10 * weekly)
 
 /////////////////////////
 // Variables
@@ -130,10 +124,9 @@ float down_imbalance_lowest = na
 int lastX = na
 float lastHY = na
 float lastLY = na
-float up_take_profit = na
 float up_stop_limit = na
-float down_take_profit = na
-float down_stop_limit = na
+float up_limit = na
+float up_stop_margin = na
 
 up_imbalance_high := up_imbalance_high[1]
 up_imbalance_low := up_imbalance_low[1]
@@ -144,10 +137,9 @@ down_imbalance_bar_index := down_imbalance_bar_index [1]
 lastX := lastX[1]
 lastHY := lastHY[1]
 lastLY := lastLY[1]
-up_take_profit := up_take_profit[1]
 up_stop_limit := up_stop_limit[1]
-down_take_profit := down_take_profit[1]
-down_stop_limit := down_stop_limit[1]
+up_limit := up_limit[1]
+up_stop_margin := up_stop_margin[1]
 
 /////////////////////////////////
 // Big move detection
@@ -180,36 +172,55 @@ if up_imbalance
     up_imbalance_high := not na(down_imbalance_high) and down_imbalance_high > low[0] ? na : low[0]
     up_imbalance_low := not na(down_imbalance_high) and down_imbalance_high > low[0] ? na : up_imbalance_low[1] ? up_imbalance_low[1] : high[2]
     up_imbalance_bar_index := bar_index
-down_imbalance_high := high > down_imbalance_high or bar_index > down_imbalance_bar_index + sma_length ? na : down_imbalance_high
+down_imbalance_high := high > down_imbalance_high or bar_index > down_imbalance_bar_index + 10 * weekly ? na : down_imbalance_high
 down_imbalance_low := na(down_imbalance_high) ? na : high > down_imbalance_low ? high : down_imbalance_low
-up_imbalance_low := low < up_imbalance_low or bar_index > up_imbalance_bar_index + sma_length ? na : up_imbalance_low
+up_imbalance_low := low < up_imbalance_low or bar_index > up_imbalance_bar_index + 10 * weekly ? na : up_imbalance_low
 up_imbalance_high := na(up_imbalance_low) ? na : low < up_imbalance_high ? low : up_imbalance_high
 
 //////////////////////////
 // Calculate KC
 
 tr_range = math.max(high - low, math.abs(high - close[1]), math.abs(low - close[1]))
-sma_range = ta.percentile_nearest_rank(tr_range, 100, 50) //ta.sma(tr_range, sma_length)
-upperKC = sma_close + sma_range * 2
-lowerKC = sma_close - sma_range * 2
+sma_range = ta.percentile_nearest_rank(tr_range, 20 * weekly, 50) //ta.sma(tr_range, sma_length)
+upperKC = smma_short + sma_range * 1.5
+lowerKC = smma_short - sma_range * 1.5
+// plot(upperKC)
+// plot(lowerKC)
 
 ///////////////////////////////////////////////////
 // Consolidation zone
-consolidation_length = sma_length //timeframe.isminutes ? observations * 24 * 60 / timeframe.multiplier : observations
+consolidation_length = 15
 candle_high = open > close ? (high + open) / 2 : (high + close) / 2
 candle_low = open < close ? (low + open) / 2 : (low + close) / 2
 candle_highest = ta.highest(candle_high, consolidation_length)
 candle_lowest = ta.lowest(candle_low, consolidation_length)
+up_stop_margin := (candle_highest - candle_lowest) / 2
+up_stop_limit := candle_lowest + up_stop_margin
+up_limit := candle_highest + up_stop_margin
 
-if (candle_highest - candle_lowest > upperKC - lowerKC) and (na(candle_highest[1]) or na(candle_lowest[1]))
+if (candle_highest - candle_lowest > upperKC - lowerKC) or (candle_highest - candle_lowest) / candle_highest > max_channel_size
     candle_highest := na
     candle_lowest := na
-if not na(candle_highest[1]) and not na(candle_highest)
+    up_stop_margin := up_stop_margin[1]
+    up_stop_limit := up_stop_limit[1]
+    up_limit := up_limit[1]
+if not na(candle_highest[1])
     candle_highest := candle_highest[1]
     candle_lowest := candle_lowest[1]
-if (high + close) / 2 > candle_highest or (low + close) / 2 < candle_lowest //or candle_highest < open or candle_lowest > open
+    up_stop_margin := up_stop_margin[1]
+    up_stop_limit := up_stop_limit[1]
+    up_limit := up_limit[1]
+if not na(candle_highest[1]) and (high > candle_highest[1] * 1.01 or low < candle_lowest[1] * 0.99)
     candle_highest := na
     candle_lowest := na
+    up_stop_margin := up_stop_margin[1]
+    up_stop_limit := up_stop_limit[1]
+    up_limit := up_limit[1]
+if strategy.position_size > 0
+    up_stop_margin := up_stop_margin[1]
+    up_stop_limit := up_stop_limit[1]
+    up_limit := up_limit[1]
+
 line line1 = na
 line line2 = na
 line line3 = na
@@ -230,107 +241,57 @@ if not na(candle_highest[1]) and na(candle_highest)
     lastHY := candle_highest[1]
     lastLY := candle_lowest[1]
 
-///////////////////////////////////////
-
-up_trend = up_imbalance_high - up_imbalance_low > 0
-down_trend = down_imbalance_high - down_imbalance_low > 0
-sma_color = color.gray
-sma_color := up_trend ? color.green : sma_color
-sma_color := down_trend ? color.red : sma_color
+////////////////////////////////////////
+// Momentum
+int up_bar = close > close[1] ? 1 : 0
+bool momentum = up_bar and math.sum(up_bar, 15) >= 12 and close > close[14] * 1.2 and sma_volume > sma_volume[14] * 1.25
 
 ////////////////////////////////////////
-// Alerts
+// Warnings
+bool lower_lows = na
+lower_lows := (up_trend or up_trend[1] or up_trend[2]) and low < low[1] and low[1] < low[2] and low[2] < low[3] and not (close > 0.5 * (high + low) and volume > sma_volume)
+bool close_bl_20 = (up_trend or up_trend[1] or up_trend[2]) and close < smma_week and close[1] >= smma_week[1]
+
+////////////////////////////////////////
+// Strategy
 int entry_bar_index = na
 entry_bar_index := strategy.position_size == 0 ? 0 : entry_bar_index[1]
 
-int alert = na
-alert := strategy.position_size == 0 and strategy.position_size[1] != 0 and entry_bar_index[1] == 0 ? 0 : nz(alert[1])
-
-if up_imbalance_high - up_imbalance_low > 0 and alert <= 0
-    alert := 2
-if not na(candle_highest[1]) and na(candle_highest) and (high+ close) / 2 > candle_highest[1]
-    alert := alert + 2
-if big_move_up
-    alert := alert + 2
-if up_imbalance
-    alert := alert + 2
-    
-if down_imbalance_high - down_imbalance_low > 0 and alert >= 0
-    alert :=  -2
-if not na(candle_lowest[1]) and na(candle_lowest) and (low + close) / 2 < candle_lowest[1]
-    alert := alert - 2
-if big_move_down
-    alert := alert - 2
-if down_imbalance
-    alert := alert - 2
-
-alert_up = alert >= score and up_trend
-alert_down = alert <= -score and down_trend
-
-// string alert_msg = '{"blocks": [{"type": "section","text": {"type": "mrkdwn","text": "{{ticker}}: Exit of the consolidation"}}]}'
-// alertcondition(alert >= score or alert <= -score, title='Consolidation Zone', message=alert_msg)
-if strategy.position_size == 0
-    if alert_up
-        up_take_profit := close * (1 + close_volatility * 0.5)
-        up_stop_limit := close * (1 - close_volatility * 0.1)
-        down_take_profit := na
-        down_stop_limit := na
-        strategy.entry("L", direction=strategy.long)
-        strategy.exit("SL", from_entry="L", stop=up_stop_limit, limit=up_take_profit)
+if window() and strategy.position_size == 0
+    if up_trend and not na(candle_highest)
+        strategy.entry("L", direction=strategy.long, limit=up_limit, stop=(up_stop_limit + up_stop_margin) * 1.01 )
         entry_bar_index := bar_index
-    else if alert_down
-        up_take_profit := na
-        up_stop_limit := na
-        down_take_profit := close * (1 - close_volatility * 0.5)
-        down_stop_limit := close * (1 + close_volatility * 0.1)
-        strategy.order("S", direction=strategy.short)
-        strategy.exit("SS", from_entry="S", stop=down_stop_limit, limit=down_take_profit)
-        entry_bar_index := bar_index
-    else if strategy.position_size[1] != 0
-        up_imbalance_high := na
-        up_imbalance_low := na
-        down_imbalance_high := na
-        down_imbalance_low := na
-
-if strategy.position_size > 0 and down_trend 
-    strategy.close("L")
-if strategy.position_size < 0 and up_trend
-    strategy.close("S")
-if strategy.position_size > 0 and bar_index - entry_bar_index > 240
-    strategy.close("L")
-    alert := 5
-if strategy.position_size < 0 and bar_index - entry_bar_index > 120
-    strategy.close("S")
-    alert := 0
-    
-alert := alert >= 0 ? alert - 1 : alert
-alert := alert <= 0 ? alert + 1 : alert
+    else
+        strategy.cancel("L")
+// plot((up_stop_limit + up_stop_margin) * 1.01)
+if strategy.position_size > 0
+    if (not up_trend and bar_index >= entry_bar_index + 15) or momentum
+        strategy.cancel_all()
+        strategy.close("L")
+    else
+        new_stop_limit = smma_week - up_stop_margin
+        up_stop_limit := new_stop_limit > up_stop_limit and new_stop_limit < strategy.position_avg_price ? new_stop_limit : new_stop_limit > up_stop_limit and new_stop_limit >= strategy.position_avg_price ? (strategy.position_avg_price > smma_short ? strategy.position_avg_price : smma_short) : up_stop_limit
+        if close <= up_stop_limit
+            strategy.exit("LS", from_entry="L", stop=up_stop_limit)
+        else
+            strategy.cancel("LS")
+// plot(up_stop_limit)
 
 ////////////////////////////////////////
 // Plot functions
 
-// plot(up_take_profit, style=plot.style_linebr)
-// plot(up_stop_limit, style=plot.style_linebr)
-// plot(down_take_profit, style=plot.style_linebr)
-// plot(down_stop_limit, style=plot.style_linebr)
-// plot(upperKC, style=plot.style_linebr)
-// plot(lowerKC, style=plot.style_linebr)
+bar_color = close > close[1] ? (close > 0.5 * (high + low) ? color.green : color.teal) : (close < 0.5 * (high + low) ? color.red : color.olive)
+barcolor(bar_color)
+plot(smma_week, style=plot.style_linebr, color=color.new(color.purple, 30))
+plot(smma_short, style=plot.style_linebr, color=up_trend ? color.new(color.green, 50) : down_trend ? color.new(color.red, 70) : color.new(color.gray, 70))
+plot(smma_mid, style=plot.style_linebr, color=color.new(color.blue, 70))
+plot(smma_long, style=plot.style_linebr, color=color.new(color.yellow, 70))
 
-plot(sma_close, color=sma_color, style=plot.style_linebr)
-
-// plotshape(alert_up, style=shape.triangleup,location=location.abovebar, color=color.new(color.green, 50), size = size.tiny)
-// plotshape(alert_down, style=shape.triangledown,location=location.belowbar, color=color.new(color.red, 50), size = size.tiny)
-
-plot(candle_highest, color=color.blue, style=plot.style_linebr, linewidth=2)
+plot(candle_highest, color=up_trend ? #00FF00 : color.blue, style=plot.style_linebr, linewidth=2)
 plot((candle_highest + candle_lowest) / 2, color=color.new(color.blue,60), style=plot.style_linebr, linewidth=1)
 plot(candle_lowest, color=color.blue, style=plot.style_linebr, linewidth=2)
 
-plot_up_imbalance_high = plot(up_imbalance_high, color=color.new(color.green,75), style=plot.style_linebr, linewidth=1)
-plot_up_imbalance_low = plot(up_imbalance_low, color=color.new(color.green,75), style=plot.style_linebr, linewidth=1)
-fill(plot_up_imbalance_high, plot_up_imbalance_low, color=color.new(color.green, 90))
-plot_down_imbalance_high = plot(down_imbalance_high, color=color.new(color.red,75), style=plot.style_linebr, linewidth=1)
-plot_down_imbalance_low = plot(down_imbalance_low, color=color.new(color.red,75), style=plot.style_linebr, linewidth=1)
-fill(plot_down_imbalance_high, plot_down_imbalance_low, color=color.new(color.red, 90))
-
-plotshape(big_move_up, style=shape.cross,location=location.belowbar, color=color.new(color.yellow, 50), size = size.tiny)
-plotshape(big_move_down, style=shape.cross,location=location.abovebar, color=color.new(color.yellow, 50), size = size.tiny)
+plotshape(big_move_up, style=shape.triangleup,location=location.belowbar, color=color.new(color.teal, 50), size = size.tiny)
+plotshape(big_move_down, style=shape.triangledown,location=location.abovebar, color=color.new(color.olive, 50), size = size.tiny)
+plotshape(momentum, style=shape.diamond,location=location.abovebar, color=color.new(color.white, 50), size = size.tiny)
+plotshape(lower_lows or close_bl_20, style=shape.flag,location=location.belowbar, color=lower_lows and close_bl_20 ? color.red : color.new(color.red, 50), size = size.tiny)
