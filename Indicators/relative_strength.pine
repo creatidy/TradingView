@@ -1,0 +1,41 @@
+// @version=5
+indicator(title="Relative Strength (IBD Style)", shorttitle="RS", format=format.percent, max_bars_back=260)
+
+ref_input = input("GPW:WIG", title="Reference")
+up_color = input(color.green, title="Strength Color")
+down_color = input(color.red, title="Weakness Color")
+weekly = timeframe.isweekly ? 1 : 5
+oneYear = 52*weekly
+
+stock = request.security(syminfo.tickerid, timeframe.period, close)
+ref = array.pop(str.split(syminfo.tickerid,":")) != ref_input ? request.security(ref_input, timeframe.period, close) : stock
+
+// use more recent quarters if data for full year is not available
+quarter_perf(data, n) =>
+    i = n
+    refCandle = i*oneYear/4
+    baseCandle = (i-1)*oneYear/4
+    while (not data[refCandle] and i > 1) 
+        i := i - 1
+        refCandle := i*oneYear/4
+        baseCandle := (i-1)*oneYear/4
+    
+    ta.roc(data[baseCandle], refCandle)
+
+// first quarter is weighted more
+stock_performance = 0.4*quarter_perf(stock,1) + 0.2*quarter_perf(stock,2) + 0.2*quarter_perf(stock,3) + 0.2*quarter_perf(stock,4)
+ref_performance = 0.4*quarter_perf(ref,1) + 0.2*quarter_perf(ref,2) + 0.2*quarter_perf(ref,3) + 0.2*quarter_perf(ref,4)
+
+zero_line = 0
+rs = stock_performance - ref_performance
+rs_sma = ta.sma(rs, oneYear)
+plot(rs_sma, style=plot.style_linebr, color=color.new(#00ffaa, 70))
+
+zero_color = color.new(color.gray, 100)
+plot_color = (rs >= zero_line) ? up_color : down_color
+fill_color = (rs >= zero_line) ? up_color : down_color
+fill_color := color.new(fill_color, 70)
+
+zero_plot = plot(zero_line, title="Zero Line", color=zero_color, linewidth=1, display=display.none)
+rs_plot = plot(rs, title="Relative Strength", color=plot_color, linewidth=2)
+fill(plot1=rs_plot, plot2=zero_plot, color=fill_color)
