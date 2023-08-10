@@ -25,6 +25,7 @@ window() =>
 // Common code
 percentile = input.int(defval = 95, title="Impulse Percentile", minval=0, maxval=99)
 max_channel_size = input.int(defval = 8, title="Max Channel Size [%]", minval=0, maxval=99) * 0.01
+tolerance = input.float(defval = 0.1, title="Tolerance [%]", minval=0, maxval=99, step=0.1) * 0.01
 
 green50 = color.new(#44FF24, 60)
 red50 = color.new(#FF4424, 50)
@@ -44,7 +45,7 @@ smma_short = smma(close, 10 * weekly)
 smma_mid = smma(close, 30 * weekly)
 smma_long = smma(close, 40 * weekly)
 lowest = ta.lowest(low, 52 * weekly)
-highest = ta.lowest(high, 52 * weekly)
+highest = ta.highest(high, 52 * weekly)
 
 
 /////////////////////////////////////
@@ -84,6 +85,7 @@ up_trend := smma_mid > smma_long ? up_trend : false
 up_trend := ta.lowest(smma_long, 4*weekly+1) == smma_long[4*weekly] ? up_trend : false
 // MA 50 is above both MA 150 and MA 200
 up_trend := smma_short > smma_mid ? up_trend : false
+up_trend := smma_week > smma_short ? up_trend : false
 // The current stock price is trading  above MA 50
 up_trend := close > smma_short ? up_trend : false
 // Current stock price is 30% above 52 weeks low
@@ -92,9 +94,17 @@ up_trend := close > lowest * 1.30 ? up_trend : false
 up_trend := close > highest * 0.75 ? up_trend : false
 // RS Ratings more than 70
 // TODO
-up_trend := rs > 0 ? up_trend : false
+up_trend := rs > 4.0 ? up_trend : false
 
-down_trend = smma_short < smma_mid and smma_mid < smma_long
+down_trend = true
+down_trend := smma_mid < smma_long ? down_trend : false
+down_trend := ta.highest(smma_long, 4*weekly+1) == smma_long[4*weekly] ? down_trend : false
+down_trend := smma_short < smma_mid ? down_trend : false
+down_trend := smma_week < smma_short ? down_trend : false
+down_trend := close < smma_short ? down_trend : false
+down_trend := close < highest * 0.75 ? down_trend : false
+down_trend := close < lowest * 1.30 ? down_trend : false
+down_trend := rs < -4.0 ? down_trend : false
 
 /////////////////////////
 // Volume
@@ -210,7 +220,7 @@ if not na(candle_highest[1])
     up_stop_margin := up_stop_margin[1]
     up_stop_limit := up_stop_limit[1]
     up_limit := up_limit[1]
-if not na(candle_highest[1]) and (high > candle_highest[1] * 1.01 or low < candle_lowest[1] * 0.99)
+if not na(candle_highest[1]) and (high > candle_highest[1] * (1+tolerance) or low < candle_lowest[1] * (1-tolerance))
     candle_highest := na
     candle_lowest := na
     up_stop_margin := up_stop_margin[1]
@@ -259,7 +269,7 @@ entry_bar_index := strategy.position_size == 0 ? 0 : entry_bar_index[1]
 
 if window() and strategy.position_size == 0
     if up_trend and not na(candle_highest)
-        strategy.entry("L", direction=strategy.long, limit=up_limit, stop=(up_stop_limit + up_stop_margin) * 1.01 )
+        strategy.entry("L", direction=strategy.long, limit=up_limit, stop=(up_stop_limit + up_stop_margin) * (1 + tolerance) )
         entry_bar_index := bar_index
     else
         strategy.cancel("L")
@@ -282,14 +292,18 @@ if strategy.position_size > 0
 
 bar_color = close > close[1] ? (close > 0.5 * (high + low) ? color.green : color.teal) : (close < 0.5 * (high + low) ? color.red : color.olive)
 barcolor(bar_color)
-plot(smma_week, style=plot.style_linebr, color=color.new(color.purple, 30))
-plot(smma_short, style=plot.style_linebr, color=up_trend ? color.new(color.green, 50) : down_trend ? color.new(color.red, 70) : color.new(color.gray, 70))
+plot1 = plot(smma_week, style=plot.style_linebr, color=up_trend ? color.new(color.green, 50) : down_trend ? color.new(color.red, 70) : color.new(color.gray, 70))
+plot2 = plot(smma_short, style=plot.style_linebr, color=up_trend ? color.new(color.green, 50) : down_trend ? color.new(color.red, 70) : color.new(color.gray, 70))
+fill(plot1, plot2, color=up_trend ? color.new(color.green, 80) : down_trend ? color.new(color.red, 80) : color.new(color.gray, 95))
+
 plot(smma_mid, style=plot.style_linebr, color=color.new(color.blue, 70))
 plot(smma_long, style=plot.style_linebr, color=color.new(color.yellow, 70))
 
+plot(candle_highest*(1+tolerance), color=color.new(color.blue,70), style=plot.style_linebr, linewidth=1)
 plot(candle_highest, color=up_trend ? #00FF00 : color.blue, style=plot.style_linebr, linewidth=2)
 plot((candle_highest + candle_lowest) / 2, color=color.new(color.blue,60), style=plot.style_linebr, linewidth=1)
-plot(candle_lowest, color=color.blue, style=plot.style_linebr, linewidth=2)
+plot(candle_lowest, color=down_trend ? #FF0000 : color.blue, style=plot.style_linebr, linewidth=2)
+plot(candle_lowest*(1-tolerance), color=color.new(color.blue,70), style=plot.style_linebr, linewidth=1)
 
 plotshape(big_move_up, style=shape.triangleup,location=location.belowbar, color=color.new(color.teal, 50), size = size.tiny)
 plotshape(big_move_down, style=shape.triangledown,location=location.abovebar, color=color.new(color.olive, 50), size = size.tiny)
